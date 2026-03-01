@@ -1,0 +1,82 @@
+  const handleReplan = () => {
+    if (!studyPlan) return;
+    
+    // 获取所有已完成的单元编号
+    const completedUnitNumbers = new Set<number>();
+    studyPlan.tasks.forEach(task => {
+      [...task.newLearning, ...task.review].forEach(range => {
+        if (completedRanges.has(range.id)) {
+          for (let i = range.start; i <= range.end; i++) {
+            completedUnitNumbers.add(i);
+          }
+        }
+      });
+    });
+    
+    const uniqueCompletedUnits = Array.from(completedUnitNumbers).sort((a, b) => a - b);
+    
+    // 构建已完成单元的原始学习日期映射
+    const completedLearningDates = new Map<number, Date>();
+    studyPlan.tasks.forEach(task => {
+      task.newLearning.forEach(range => {
+        if (completedRanges.has(range.id)) {
+          for (let i = range.start; i <= range.end; i++) {
+            completedLearningDates.set(i, new Date(task.date));
+          }
+        }
+      });
+    });
+    
+    // 计算新开始日期（明天）
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // 获取原计划结束日期
+    const originalEndDate = new Date(studyPlan.tasks[studyPlan.tasks.length - 1].date);
+    
+    // 获取当前版本号
+    const currentVersion = studyPlan.version || 1.0;
+    
+    // 生成重新规划
+    try {
+      const newPlan = generateStudyPlan({
+        planName: studyPlan.planName.replace(/ v\d+\.\d+$/, ''), // 移除旧版本号
+        unitPrefix: studyPlan.unitPrefix,
+        totalAmount: studyPlan.totalAmount,
+        planDays: 0, // 不使用，会自动计算
+        startDate: tomorrow,
+        shuffle: studyOrder,
+        isReplan: true,
+        completedUnits: uniqueCompletedUnits,
+        completedLearningDates,
+        originalEndDate,
+        currentVersion,
+      });
+      
+      // 替换当前计划（不创建新计划）
+      setStudyPlan(newPlan);
+      setCompletedRanges(new Set());
+      setPlanName(newPlan.planName);
+      
+      // 保存到localStorage
+      if (currentPlanId) {
+        const plansList: SavedPlan[] = JSON.parse(localStorage.getItem(PLANS_LIST_KEY) || '[]');
+        const planIndex = plansList.findIndex(p => p.id === currentPlanId);
+        if (planIndex !== -1) {
+          plansList[planIndex] = {
+            id: currentPlanId,
+            plan: newPlan,
+            completedRanges: [],
+            createdAt: plansList[planIndex].createdAt,
+          };
+          localStorage.setItem(PLANS_LIST_KEY, JSON.stringify(plansList));
+        }
+      }
+      
+      const uncompletedCount = studyPlan.totalAmount - uniqueCompletedUnits.length;
+      toast.success(t.replanSuccess.replace('{0}', uncompletedCount.toString()));
+    } catch (error) {
+      toast.error(t.replanError);
+      console.error(error);
+    }
+  };
