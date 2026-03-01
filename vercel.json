@@ -1,4 +1,6 @@
 {
   "buildCommand": "pnpm build:github",
-  "outputDirectory": "dist/public"
+  "outputDirectory": "dist/public",
+  "installCommand": "pnpm install",
+  "framework": null
 }
