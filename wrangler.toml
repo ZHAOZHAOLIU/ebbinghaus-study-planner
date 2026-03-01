@@ -1,5 +1,0 @@
-name = "ebbinghaus-study-planner"
-compatibility_date = "2026-03-01"
-
-[site]
-bucket = "./dist/public"
