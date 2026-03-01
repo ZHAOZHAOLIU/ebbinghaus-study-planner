@@ -32,6 +32,9 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <footer style={{ textAlign: 'center', padding: '20px', fontSize: '12px', color: '#888' }}>
+            © 2026 Created by Caroline
+          </footer>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
