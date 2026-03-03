@@ -120,9 +120,9 @@ export function generateStudyPlan(input: StudyInput): StudyPlan {
     const taskDate = new Date(startDate);
     taskDate.setDate(taskDate.getDate() + day);
     
-    const newLearning = groupUnitsIntoRanges(dayUnits, unitPrefix);
+    const newLearning = groupUnitsIntoRanges(dayUnits, unitPrefix, 'new', day);
     const reviewUnits = reviewSchedule.get(day) || [];
-    const review = groupUnitsIntoRanges(reviewUnits, unitPrefix);
+    const review = groupUnitsIntoRanges(reviewUnits, unitPrefix, 'review', day);
     
     tasks.push({
       date: taskDate,
@@ -175,9 +175,10 @@ function generateReplan(input: StudyInput): StudyPlan {
   const newPlanName = `${planName.replace(/ v\d+\.\d+$/, '')} v${newVersion}.0`;
   
   // 计算剩余天数（从新开始日期到原结束日期）
-  const remainingDays = originalEndDate 
-    ? Math.max(0, Math.ceil((originalEndDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1)
-    : 0;
+  // 至少保留1天，确保即使逾期也能生成计划
+  const remainingDays = originalEndDate
+    ? Math.max(1, Math.ceil((originalEndDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1)
+    : 1;
   
   // 生成剩余天数文本
   const formatDate = (date: Date) => {
@@ -186,9 +187,14 @@ function generateReplan(input: StudyInput): StudyPlan {
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
-  
+
+  // 检查是否已逾期
+  const isOverdue = originalEndDate && startDate > originalEndDate;
+
   const remainingDaysText = originalEndDate
-    ? `共：${remainingDays} 天（从 ${formatDate(startDate)} 到 ${formatDate(originalEndDate)}）`
+    ? isOverdue
+      ? `共：${remainingDays} 天（已逾期）`
+      : `共：${remainingDays} 天（从 ${formatDate(startDate)} 到 ${formatDate(originalEndDate)}）`
     : `共：${remainingDays} 天`;
   
   // 识别未完成的单元
@@ -215,22 +221,46 @@ function generateReplan(input: StudyInput): StudyPlan {
   const reviewSchedule: Map<number, number[]> = new Map();
   
   // 为已完成单元安排复习
-  // 已完成单元的复习基于其原始学习日期
+  // 已完成单元的复习基于其原始学习日期，但都从新计划的第一天开始安排
+  // 收集因为超出remainingDays而无法安排的复习单元
+  const overflowReviewUnits: number[] = [];
+
   for (const unit of completedUnits) {
     const learningDate = completedLearningDates.get(unit);
     if (!learningDate) continue;
-    
+
     // 计算从原始学习日期到新开始日期的天数差
     const daysSinceLearning = Math.floor((startDate.getTime() - learningDate.getTime()) / (1000 * 60 * 60 * 24));
-    
+
     // 根据艾宾浩斯曲线安排复习
-    for (const interval of REVIEW_INTERVALS) {
-      const reviewDayOffset = interval - daysSinceLearning;
-      if (reviewDayOffset >= 0 && reviewDayOffset < remainingDays) {
+    // 无论过了多少天，都要安排复习
+    // 复习从新计划的第一天开始，按照艾宾浩斯间隔依次安排
+    for (let i = 0; i < REVIEW_INTERVALS.length; i++) {
+      const reviewDayOffset = i; // 复习依次安排在第1天、第2天、第4天、第7天、第15天
+
+      if (reviewDayOffset < remainingDays) {
         if (!reviewSchedule.has(reviewDayOffset)) {
           reviewSchedule.set(reviewDayOffset, []);
         }
         reviewSchedule.get(reviewDayOffset)!.push(unit);
+      } else {
+        // 如果超出remainingDays，收集到overflowReviewUnits
+        if (!overflowReviewUnits.includes(unit)) {
+          overflowReviewUnits.push(unit);
+        }
+      }
+    }
+  }
+
+  // 将无法安排的复习单元合并到第一天的复习中
+  if (overflowReviewUnits.length > 0) {
+    if (!reviewSchedule.has(0)) {
+      reviewSchedule.set(0, []);
+    }
+    const firstDayReview = reviewSchedule.get(0)!;
+    for (const unit of overflowReviewUnits) {
+      if (!firstDayReview.includes(unit)) {
+        firstDayReview.push(unit);
       }
     }
   }
@@ -269,9 +299,9 @@ function generateReplan(input: StudyInput): StudyPlan {
     const taskDate = new Date(startDate);
     taskDate.setDate(taskDate.getDate() + day);
     
-    const newLearning = groupUnitsIntoRanges(dayNewUnits, unitPrefix);
+    const newLearning = groupUnitsIntoRanges(dayNewUnits, unitPrefix, 'new', day);
     const reviewUnits = reviewSchedule.get(day) || [];
-    const review = groupUnitsIntoRanges(reviewUnits, unitPrefix);
+    const review = groupUnitsIntoRanges(reviewUnits, unitPrefix, 'review', day);
     
     tasks.push({
       date: taskDate,
@@ -306,16 +336,16 @@ function generateReplan(input: StudyInput): StudyPlan {
 /**
  * Group consecutive units into ranges
  */
-function groupUnitsIntoRanges(units: number[], unitPrefix: string): UnitRange[] {
+function groupUnitsIntoRanges(units: number[], unitPrefix: string, type: 'new' | 'review' = 'new', day?: number): UnitRange[] {
   if (units.length === 0) return [];
-  
+
   // Sort units
   const sortedUnits = [...units].sort((a, b) => a - b);
-  
+
   const ranges: UnitRange[] = [];
   let start = sortedUnits[0];
   let end = sortedUnits[0];
-  
+
   for (let i = 1; i < sortedUnits.length; i++) {
     if (sortedUnits[i] === end + 1) {
       end = sortedUnits[i];
@@ -323,22 +353,22 @@ function groupUnitsIntoRanges(units: number[], unitPrefix: string): UnitRange[] 
       ranges.push({
         start,
         end,
-        id: `${unitPrefix}-${start}-${end}`,
+        id: `${type}-${day || 0}-${unitPrefix}-${start}-${end}`,
         completed: false
       });
       start = sortedUnits[i];
       end = sortedUnits[i];
     }
   }
-  
+
   // Push the last range
   ranges.push({
     start,
     end,
-    id: `${unitPrefix}-${start}-${end}`,
+    id: `${type}-${day || 0}-${unitPrefix}-${start}-${end}`,
     completed: false
   });
-  
+
   return ranges;
 }
 
